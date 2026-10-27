@@ -59,6 +59,10 @@ jobs:
           VPS_APP_DIR: ${{ secrets.VPS_APP_DIR }}
         run: |
           set -euo pipefail
+          : "${VPS_HOST:?GitHub Secret VPS_HOST belum diisi.}"
+          : "${VPS_USER:?GitHub Secret VPS_USER belum diisi.}"
+          : "${VPS_APP_DIR:?GitHub Secret VPS_APP_DIR belum diisi.}"
+
           if [[ ! "$VPS_APP_DIR" =~ ^/[A-Za-z0-9._/-]+$ ]]; then
             echo "VPS_APP_DIR harus berupa path absolut tanpa spasi."
             exit 1
