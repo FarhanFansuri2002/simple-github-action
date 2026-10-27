@@ -1,0 +1,74 @@
+name: Test and deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Configure SSH
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Deploy to VPS
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+          VPS_APP_DIR: ${{ secrets.VPS_APP_DIR }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$VPS_APP_DIR" =~ ^/[A-Za-z0-9._/-]+$ ]]; then
+            echo "VPS_APP_DIR harus berupa path absolut tanpa spasi."
+            exit 1
+          fi
+
+          port="${VPS_PORT:-22}"
+          target="$VPS_USER@$VPS_HOST"
+          release="$VPS_APP_DIR/releases/$GITHUB_SHA"
+          ssh_cmd=(ssh -i ~/.ssh/deploy_key -p "$port" -o BatchMode=yes -o StrictHostKeyChecking=yes)
+
+          "${ssh_cmd[@]}" "$target" "mkdir -p '$release'"
+          tar --exclude=.git --exclude=node_modules -czf - . |
+            "${ssh_cmd[@]}" "$target" "mkdir -p '$release' && tar -xzf - -C '$release' && cd '$release' && npm ci --omit=dev && ln -sfn '$release' '$VPS_APP_DIR/current' && APP_CWD='$VPS_APP_DIR/current' pm2 startOrReload '$VPS_APP_DIR/current/ecosystem.config.cjs' --update-env"
